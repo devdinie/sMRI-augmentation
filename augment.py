@@ -76,7 +76,7 @@ def main():
                         
                         #region rotation - rotate by angles
                         for rot_angle in range(angle_limit_neg,angle_limit_pos+1,rot_inc):
-                                s=1#print(rot_angle)
+                                s=1print(rot_angle)
                                 
                         #endregion rotation - rotate by angles
                                 
