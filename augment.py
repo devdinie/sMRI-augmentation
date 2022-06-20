@@ -1,7 +1,7 @@
 import os
+import tqdm
 import shutil
 import argparse
-from weakref import ref
 
 import scipy
 import scipy.ndimage
@@ -103,7 +103,7 @@ def main():
         files_list = os.listdir(os.path.join(data_dir,"brains"))
         no_files   = len(files_list)
         
-        filename_suffix = "rC00-n00-d0-sp0000-gh0"	
+        filename_suffix = "rC0000-n00-d0-sp0000-gh0"	
         
         """
         empty bool matrix to assign augmentation methods to perform in the order:
@@ -120,6 +120,7 @@ def main():
  	each image will have a set of rotated images with (no other methods applied) and a set of images 
   	with noise added (with no other methods, including rotation)
  	"""
+        progress_bar = tqdm.tqdm(total=no_files*(12/3)+1)
         for img_fname in files_list:
                 
                 #region get files and file info
@@ -156,21 +157,27 @@ def main():
                 each of these cases, rotate the image from min to max angle in steps of rot_inc
                 """
                 if augtypes[0]:
-                        angle_limit_neg = -6 ; angle_limit_pos =  6
+                        angle_min = -6 ; angle_max =  6
                         rot_inc  = 3
                         all_axes = [(1, 0), (1, 2), (0, 2)]
                         
-                        for rot_angle in range(angle_limit_neg,angle_limit_pos+1,rot_inc):
+                        for rot_angle in range(angle_min,angle_max+1,rot_inc):
                                 if not rot_angle == 0:
                                         for axes in all_axes:
                                                 imgaug_file, mskaug_file, dir = rotate(img_file, msk_file, rot_angle, axes)
-                                                dir_ang = dir+str(f'{np.abs(rot_angle):02}')
-                                                                                            
-                                imgaug_fname = os.path.join(output_dir,"brains", imgaug_fname.replace("rC00",dir_ang))
-                                mskaug_fname = os.path.join(output_dir,"target_labels", imgaug_fname.replace("rC00",dir_ang))
-                                print(imgaug_fname,"\n", mskaug_fname,"\n","-----")               
-                                #sitk.WriteImage(imgaug_file, imgaug_fname)
-                                #sitk.WriteImage(mskaug_file, mskaug_fname)
+                                                dir_ang = "r"+dir+str(f'{np.abs(rot_angle):02}')+str(axes[0])+str(axes[1])
+                                                
+                                                imgaug_fname_base  = str(os.path.basename(imgaug_fname).split('_')[2])
+                                                replace_sidx= imgaug_fname_base.index('r') 
+                                                replace_str = imgaug_fname_base[replace_sidx:replace_sidx+6]
+                                                                                          
+                                                imgaug_fname = imgaug_fname.replace(replace_str,dir_ang)
+                                                sitk.WriteImage(imgaug_file, imgaug_fname)
+                                                
+                                                if labels_available:
+                                                        mskaug_fname = mskaug_fname.replace(replace_str,dir_ang) 
+                                                        sitk.WriteImage(mskaug_file, mskaug_fname)
+                                                progress_bar.update(1)
         	#endregion augmentation - individual: rotation
         
         #region augmentation - individual: noise
