@@ -40,7 +40,7 @@ def get_args():
 #endregion parse arguments
 
 #region utilities
-def resample_img(img_file, msk_file, output_imgsize):
+def resample_img(output_imgsize, img_file, msk_file):
         
         ref_file = sitk.GetImageFromArray(np.zeros((output_imgsize)))
         ref_file.SetOrigin(img_file.GetOrigin())
@@ -53,8 +53,8 @@ def resample_img(img_file, msk_file, output_imgsize):
         ref_file.SetSpacing(ref_spacing)
         
         img_resampled = sitk.Resample(img_file, ref_file)
-        if msk_file:
-                msk_resampled = sitk.Resample(msk_file, img_file)
+        if not (msk_file == None):
+                msk_resampled = sitk.Resample(msk_file, img_resampled)
                 return img_resampled, msk_resampled
         else:
                 return img_resampled, None
@@ -138,14 +138,15 @@ def main():
                 imgaug_fname = os.path.abspath(img_fname).replace("t1","t1_"+filename_suffix)
                 img_file     = sitk.ReadImage(os.path.join(data_dir,"brains",img_fname), imageIO=imgio_type)
                 
+                
                 if labels_available:
                         msk_fname   = img_fname.replace("t1","labels")
                         mskaug_fname= imgaug_fname.replace("t1","labels")
                         msk_file    = sitk.ReadImage(os.path.join(data_dir,"target_labels",msk_fname), imageIO=imgio_type)
+                else: msk_file = None
                 
                 if is_resize_outputs:
-                        img_file, msk_file = resample_img(img_file, msk_file, output_imgsize)
-                        
+                        img_file, msk_file = resample_img(output_imgsize, img_file, msk_file)       
                 #endregion get files and file info 
                        
                 #region augmentation - individual: rotation
@@ -153,7 +154,6 @@ def main():
                 if rotation is a selected augmentation method, set min and max rotation angles 
                 and list axis of rotation to be used. rotate each image along each axis and in 
                 each of these cases, rotate the image from min to max angle in steps of rot_inc
-                """
                 """
                 if augtypes[0]:
                         angle_limit_neg = -6 ; angle_limit_pos =  6
@@ -168,10 +168,9 @@ def main():
                                                                                             
                                 imgaug_fname = os.path.join(output_dir,"brains", imgaug_fname.replace("rC00",dir_ang))
                                 mskaug_fname = os.path.join(output_dir,"target_labels", imgaug_fname.replace("rC00",dir_ang))
-                                                
+                                print(imgaug_fname,"\n", mskaug_fname,"\n","-----")               
                                 #sitk.WriteImage(imgaug_file, imgaug_fname)
                                 #sitk.WriteImage(mskaug_file, mskaug_fname)
-                """
         	#endregion augmentation - individual: rotation
         
         #region augmentation - individual: noise
