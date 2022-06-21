@@ -102,9 +102,14 @@ def rotate(img_fname, msk_fname, angle, axes):
 #region augmentation processes
 def rotate_images(imgaug_list, mskaug_list):
         """
-        If rotation is a selected augmentation method, set min and max rotation angles 
-        and list axis of rotation to be used. rotate each image along each axis and in 
-        each of these cases, rotate the image from min to max angle in steps of rot_inc
+        Set min and max rotation angles and list axis of rotation to be used. 
+        Rotate each image along each axis and in each of these cases, rotate 
+        each image from min to max angle in increments of rot_inc.
+                
+        Inputs: List of files in output directories (resampled and renamed)
+                data/data_aug
+                |-brains
+                |-target_labels
         """
         angle_min = -6 ; angle_max =  6
         rot_inc  = 3
@@ -134,20 +139,19 @@ def rotate_images(imgaug_list, mskaug_list):
 def main():
         """
         # Input arguments: data directory, output directory, file type (nii or mnc)
-        # Empty bool matrix to assign augmentation methods to perform in the order:
-        # rotation, noise, spiking, deformation and ghosting
-        
+        # If overwrite is true, delete any previously created output directores or files
+        # Create an empty bool matrix to assign augmentation methods to perform in the
+        # order: rotation (r), noise (n), spiking (s), deformation (d) and ghosting (g)
         # Start augmentation processes in parallel.
         """
         
-        #region get input arguments and initialize directories
         global data_dir, output_dir, imgio_type
         
         data_dir    = get_args().input_dir
         augtypes_in = get_args().aug_types
         output_dir  = get_args().output_dir
         
-        # if overwrite, previous output directories are deleted
+        #region initialize directories
         if is_overwrite and (os.path.exists(output_dir)): 
                 if os.path.exists(output_dir): shutil.rmtree(output_dir) 
                 elif os.path.exists(os.path.join(data_dir,"data_aug")): shutil.rmtree(os.path.join(data_dir,"data_aug")) 
@@ -160,7 +164,7 @@ def main():
                         labels_available = True
                         os.mkdir(os.path.join(output_dir,"target_labels"))
                 else: labels_available = False
-        #endregion get input arguments and initialize directories
+        #endregion initialize directories
            
         files_list = os.listdir(os.path.join(data_dir,"brains"))
         no_files   = len(files_list)
@@ -182,7 +186,7 @@ def main():
                         print("Invalid extension. File must be .mnc or .nii. {} not processed".format(fname))
                 #endregion check file extension 
                 
-                #region get filenames, load images and resize
+                #region get filenames, load images
                 img_fname   = os.path.join(data_dir,"brains",fname)
                 imgaug_fname= os.path.join(output_dir,"brains",fname).replace("_t1.nii","_t1_"+filename_suffix+".nii")
                 
@@ -194,7 +198,9 @@ def main():
                         
                         msk_file    = sitk.ReadImage(os.path.join(data_dir,"target_labels",msk_fname), imageIO=imgio_type)
                 else: msk_file = None
+                #endregion get filenames, load images
                 
+                #region resize and save images in output directory
                 if is_resize_outputs:
                         imgaug_file, mskaug_file = resample_img(output_imgsize, img_file, msk_file) 
                         
@@ -203,7 +209,7 @@ def main():
                 else:
                         sitk.WriteImage(img_file, imgaug_fname)
                         sitk.WriteImage(msk_file, mskaug_fname)       
-                #endregion get filenames, load images and resize
+                #endregion resize and save images in output directory
                                       
         #region get list of renamed and resized images
         imgaug_list = list(map(lambda x: os.path.join(os.path.abspath(os.path.join(output_dir,"brains")), x),os.listdir(os.path.join(output_dir,"brains")))) 
@@ -211,10 +217,13 @@ def main():
                 mskaug_list = list(map(lambda x: os.path.join(os.path.abspath(os.path.join(output_dir,"target_labels")), x),os.listdir(os.path.join(output_dir,"target_labels"))))
         else:  mskaug_list = None
         #endregion get list of renamed and resized images
-            
+        
+        """
+        # If augmentation method is selected, start respective process
+        """
         if augtypes[0]: 
                 rot_elapsedtime = rotate_images(imgaug_list, mskaug_list)
                 print(rot_elapsedtime)
-                        
+        #endregion augmentation - individual                
 if __name__ == "__main__":
     main()
