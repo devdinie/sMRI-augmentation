@@ -1,15 +1,20 @@
 import os
-import tqdm
+import time
 import shutil
 import argparse
+from tkinter.ttk import Progressbar
 
 import scipy
 import scipy.ndimage
 import numpy as np
 import SimpleITK as sitk
 
+from tqdm import tqdm
+
 is_overwrite = True # If true, any data previously processed will be lost
 is_resize_outputs = True
+labels_available  = True
+progressbar_enabled = False
 
 output_imgsize = (144,144,144)
 
@@ -23,7 +28,7 @@ def get_args():
         parser = argparse.ArgumentParser(description="sMRI-augmentation", add_help=True,
                                  formatter_class=argparse.RawTextHelpFormatter)
         
-        parser.add_argument("-input_dir", default = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)),"data/")), 
+        parser.add_argument("-input_dir", default = os.path.abspath(os.path.join(os.path.dirname(__file__),"data/")), 
                             help="Path to input data directory with brains and if available, labels.\n"
                                 + "filename format: brains- subjectid_t1.nii | labels- subjectid_labels.nii\n"
                                 + "directory structure:\ndata\n |- brains\n |- target_labels")
@@ -60,28 +65,84 @@ def resample_img(output_imgsize, img_file, msk_file):
                 return img_resampled, None
 #endregion utilities
 
-def rotate(img, msk, angle, axes):
+#region augmentation methods
+def rotate(img_fname, msk_fname, angle, axes):
         
-        img_arr = sitk.GetArrayFromImage(img)
-        msk_arr = sitk.GetArrayFromImage(msk)
+        img_file = sitk.ReadImage(img_fname, imageIO=imgio_type)
+        
+        if labels_available and not (msk_fname==None):
+                msk_file = sitk.ReadImage(msk_fname, imageIO=imgio_type)   
+                        
+        img_arr = sitk.GetArrayFromImage(img_file)
+        msk_arr = sitk.GetArrayFromImage(msk_file)
+        
+        dir = 'C' if angle <= 99 else 'A'
+        rot_str = "r"+dir+str(f'{np.abs(angle):02}')+str(axes[0])+str(axes[1])
         
         if angle < 0 : angle += 360
-        dir = 'C' if angle <= 300 else 'A'
         
-        imgrot_arr = scipy.ndimage.rotate(img_arr, angle, axes=axes, reshape=True)
-        mskrot_arr = scipy.ndimage.rotate(msk_arr, angle, axes=axes, reshape=True)
+        imgaug_arr = scipy.ndimage.rotate(img_arr, angle, axes=axes, reshape=True)
+        mskaug_arr = scipy.ndimage.rotate(msk_arr, angle, axes=axes, reshape=True)
         
-        imgrot_file = sitk.GetImageFromArray(imgrot_arr)
-        mskrot_file = sitk.GetImageFromArray(mskrot_arr)
+        imgaug_file = sitk.GetImageFromArray(imgaug_arr)
+        mskaug_file = sitk.GetImageFromArray(mskaug_arr)
         
-        return imgrot_file, mskrot_file, dir
+        img_basename  = os.path.basename(img_fname)
+        fname_arr_last= img_basename.split('_')[len(img_basename.split('_'))-1]
+        imgaug_basename = img_basename.replace(fname_arr_last[fname_arr_last.index('r'):fname_arr_last.index('r')+6], rot_str)
         
+        imgaug_fname = os.path.join(os.path.dirname(img_fname), imgaug_basename)
+        sitk.WriteImage(imgaug_file, imgaug_fname)
+
+        if labels_available:
+                mskaug_fname = os.path.join(os.path.dirname(msk_fname), imgaug_basename.replace("_t1_","_labels_"))
+                sitk.WriteImage(mskaug_file, mskaug_fname)
+#endregion augmentation methods      
+
+#region augmentation processes
+def rotate_images(imgaug_list, mskaug_list):
+        """
+        If rotation is a selected augmentation method, set min and max rotation angles 
+        and list axis of rotation to be used. rotate each image along each axis and in 
+        each of these cases, rotate the image from min to max angle in steps of rot_inc
+        """
+        angle_min = -6 ; angle_max =  6
+        rot_inc  = 3
+        all_axes = [(1, 0), (1, 2), (0, 2)]
+        no_rot_files = int((len(imgaug_list)*((angle_max-angle_min)/rot_inc)*len(all_axes)))
+        
+        if progressbar_enabled: pbar = tqdm(total=no_rot_files,desc='Generating rotated images:')
+        starttime_rot = time.time()
+        for img_fname in imgaug_list:
+                if labels_available and not (mskaug_list == None):
+                        msk_fname = img_fname.replace("/brains/","/target_labels/").replace("_t1_","_labels_")
+                else: msk_fname = None
+                           
+                for rot_angle in range(angle_min,angle_max+1,rot_inc):
+                        if not rot_angle == 0:
+                                for axes in all_axes:
+                                        rotate(img_fname, msk_fname, rot_angle, axes)
+                                        if progressbar_enabled: pbar.update(1)
+        endtime_rot = time.time()
+        rot_elapsedtime = round(endtime_rot-starttime_rot,3)
+        if progressbar_enabled: pbar.close()  
+        else: print("Generating rotated images complete.", no_rot_files,"files generated in",rot_elapsedtime,"seconds.")  
+        
+        return rot_elapsedtime
+#endregion augmentation processes
+
 def main():
+        """
+        # Input arguments: data directory, output directory, file type (nii or mnc)
+        # Empty bool matrix to assign augmentation methods to perform in the order:
+        # rotation, noise, spiking, deformation and ghosting
+        
+        # Start augmentation processes in parallel.
+        """
+        
         #region get input arguments and initialize directories
-        """
-        get path to input data and augmentation methods to be used if no input argument:
-        # default path is used and all types of augmentation methods are performed 
-        """
+        global data_dir, output_dir, imgio_type
+        
         data_dir    = get_args().input_dir
         augtypes_in = get_args().aug_types
         output_dir  = get_args().output_dir
@@ -99,100 +160,61 @@ def main():
                         labels_available = True
                         os.mkdir(os.path.join(output_dir,"target_labels"))
                 else: labels_available = False
+        #endregion get input arguments and initialize directories
            
         files_list = os.listdir(os.path.join(data_dir,"brains"))
         no_files   = len(files_list)
         
         filename_suffix = "rC0000-n00-d0-sp0000-gh0"	
         
-        """
-        empty bool matrix to assign augmentation methods to perform in the order:
-        rotation, noise, spiking, deformation and ghosting
-        if augmentation method is input, corresponding index in bool matrix is set to true
-        """
         augtypes = np.zeros(5,dtype=bool)
         for type in augtypes_in: augtypes[['r','n','s','d','g'].index(type)]=True
-        #endregion get input arguments and initialize directories
-        
+  
         #region augmentation - individual
-        """
-	perform each augmentation method on each image, only one method at a time. eg. if inputs: r n, 
- 	each image will have a set of rotated images with (no other methods applied) and a set of images 
-  	with noise added (with no other methods, including rotation)
- 	"""
-        progress_bar = tqdm.tqdm(total=no_files*(12/3)+1)
-        for img_fname in files_list:
-                
-                #region get files and file info
-                """
-                get file info: extension, subject id from filename(s)
-                raise error if files are not nii or mnc but keep processing
-                load (brain) images and if available, labels
-                """
+        for fname in files_list:
+                #region check file extension  
                 try:
-                        if not img_fname.endswith((".nii",".mnc")): raise FilenameError(img_fname.split(".")[1])
-                        else: imgio_type = "NiftiImageIO" if img_fname.split(".")[1] == "nii" else "MINCImageIO"
+                        if not fname.endswith((".nii",".mnc")): 
+                                raise FilenameError(fname.split(".")[1])
+                        else: 
+                                imgio_type = "NiftiImageIO" if fname.split(".")[1] == "nii" else "MINCImageIO"
                 except FilenameError as e:  
-                        print("Invalid extension. File must be .mnc or .nii. {} not processed".format(img_fname))
+                        print("Invalid extension. File must be .mnc or .nii. {} not processed".format(fname))
+                #endregion check file extension 
                 
-                subject_id   = img_fname.split("_")[0]  
-                imgaug_fname = os.path.abspath(img_fname).replace("t1","t1_"+filename_suffix)
-                img_file     = sitk.ReadImage(os.path.join(data_dir,"brains",img_fname), imageIO=imgio_type)
+                #region get filenames, load images and resize
+                img_fname   = os.path.join(data_dir,"brains",fname)
+                imgaug_fname= os.path.join(output_dir,"brains",fname).replace("_t1.nii","_t1_"+filename_suffix+".nii")
                 
+                img_file = sitk.ReadImage(img_fname, imageIO=imgio_type)
                 
                 if labels_available:
-                        msk_fname   = img_fname.replace("t1","labels")
-                        mskaug_fname= imgaug_fname.replace("t1","labels")
+                        msk_fname   = os.path.join(data_dir,"target_labels",fname.replace("_t1.nii","_labels.nii"))
+                        mskaug_fname= os.path.join(output_dir,"target_labels",fname.replace("_t1.nii","_labels.nii")).replace("_labels.nii","_labels_"+filename_suffix+".nii")
+                        
                         msk_file    = sitk.ReadImage(os.path.join(data_dir,"target_labels",msk_fname), imageIO=imgio_type)
                 else: msk_file = None
                 
                 if is_resize_outputs:
-                        img_file, msk_file = resample_img(output_imgsize, img_file, msk_file)       
-                #endregion get files and file info 
-                       
-                #region augmentation - individual: rotation
-                """
-                if rotation is a selected augmentation method, set min and max rotation angles 
-                and list axis of rotation to be used. rotate each image along each axis and in 
-                each of these cases, rotate the image from min to max angle in steps of rot_inc
-                """
-                if augtypes[0]:
-                        angle_min = -6 ; angle_max =  6
-                        rot_inc  = 3
-                        all_axes = [(1, 0), (1, 2), (0, 2)]
+                        imgaug_file, mskaug_file = resample_img(output_imgsize, img_file, msk_file) 
                         
-                        for rot_angle in range(angle_min,angle_max+1,rot_inc):
-                                if not rot_angle == 0:
-                                        for axes in all_axes:
-                                                imgaug_file, mskaug_file, dir = rotate(img_file, msk_file, rot_angle, axes)
-                                                dir_ang = "r"+dir+str(f'{np.abs(rot_angle):02}')+str(axes[0])+str(axes[1])
-                                                
-                                                imgaug_fname_base  = str(os.path.basename(imgaug_fname).split('_')[2])
-                                                replace_sidx= imgaug_fname_base.index('r') 
-                                                replace_str = imgaug_fname_base[replace_sidx:replace_sidx+6]
-                                                                                          
-                                                imgaug_fname = imgaug_fname.replace(replace_str,dir_ang)
-                                                sitk.WriteImage(imgaug_file, imgaug_fname)
-                                                
-                                                if labels_available:
-                                                        mskaug_fname = mskaug_fname.replace(replace_str,dir_ang) 
-                                                        sitk.WriteImage(mskaug_file, mskaug_fname)
-                                                progress_bar.update(1)
-        	#endregion augmentation - individual: rotation
-        
-        #region augmentation - individual: noise
-        #endregion augmentation - individual: noise
-        
-        #region augmentation - individual: spiking
-        #endregion augmentation - individual: spiking
-        
-        #region augmentation - individual: deformation
-        #endregion augmentation - individual: deformation
-        
-        #region augmentation - individual: ghosting
-        #endregion augmentation - individual: ghosting
-        
-        #endregion augmentation - individual
-        
+                        sitk.WriteImage(imgaug_file, imgaug_fname)
+                        sitk.WriteImage(mskaug_file, mskaug_fname)  
+                else:
+                        sitk.WriteImage(img_file, imgaug_fname)
+                        sitk.WriteImage(msk_file, mskaug_fname)       
+                #endregion get filenames, load images and resize
+                                      
+        #region get list of renamed and resized images
+        imgaug_list = list(map(lambda x: os.path.join(os.path.abspath(os.path.join(output_dir,"brains")), x),os.listdir(os.path.join(output_dir,"brains")))) 
+        if labels_available:
+                mskaug_list = list(map(lambda x: os.path.join(os.path.abspath(os.path.join(output_dir,"target_labels")), x),os.listdir(os.path.join(output_dir,"target_labels"))))
+        else:  mskaug_list = None
+        #endregion get list of renamed and resized images
+            
+        if augtypes[0]: 
+                rot_elapsedtime = rotate_images(imgaug_list, mskaug_list)
+                print(rot_elapsedtime)
+                        
 if __name__ == "__main__":
     main()
