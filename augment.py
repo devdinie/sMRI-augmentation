@@ -256,8 +256,8 @@ def main():
                         imgaug_file, mskaug_file = resample_img(output_imgsize, img_file, msk_file) 
                         
                         mskaug_arr = sitk.GetArrayFromImage(mskaug_file)
-                        mskaug_arr[mskaug_arr >0.5]= 1 
-                        mskaug_arr[mskaug_arr<=0.5]= 0    
+                        mskaug_arr[mskaug_arr >0.3]= 1 
+                        mskaug_arr[mskaug_arr<=0.3]= 0    
                         mskaugt_file = sitk.GetImageFromArray(mskaug_arr)
                         mskaugt_file.CopyInformation(mskaug_file)            
                         
@@ -265,8 +265,8 @@ def main():
                         sitk.WriteImage(mskaugt_file, mskaug_fname)  
                 else:
                         msk_arr = sitk.GetArrayFromImage(msk_file)
-                        msk_arr[msk_arr >0.5]= 1 
-                        msk_arr[msk_arr<=0.5]= 0    
+                        msk_arr[msk_arr >0.3]= 1 
+                        msk_arr[msk_arr<=0.3]= 0    
                         mskt_file = sitk.GetImageFromArray(msk_arr)
                         mskt_file.CopyInformation(msk_file) 
                         
