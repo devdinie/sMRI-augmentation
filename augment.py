@@ -69,16 +69,14 @@ def resample_img(output_imgsize, img_file, msk_file):
 def rotate(img_fname, msk_fname, angle, axes):
         
         img_file = sitk.ReadImage(img_fname, imageIO=imgio_type)
-        
         if labels_available and not (msk_fname==None):
                 msk_file = sitk.ReadImage(msk_fname, imageIO=imgio_type)   
                         
         img_arr = sitk.GetArrayFromImage(img_file)
         msk_arr = sitk.GetArrayFromImage(msk_file)
         
-        dir = 'C' if angle <= 99 else 'A'
+        dir = 'C' if angle >= 0 else 'A'
         rot_str = "r"+dir+str(f'{np.abs(angle):02}')+str(axes[0])+str(axes[1])
-        
         if angle < 0 : angle += 360
         
         imgaug_arr = scipy.ndimage.rotate(img_arr, angle, axes=axes, reshape=True)
@@ -97,6 +95,32 @@ def rotate(img_fname, msk_fname, angle, axes):
         if labels_available:
                 mskaug_fname = os.path.join(os.path.dirname(msk_fname), imgaug_basename.replace("_t1_","_labels_"))
                 sitk.WriteImage(mskaug_file, mskaug_fname)
+                
+def noisify(img_fname, msk_fname, noise_perc):
+        
+        img_file = sitk.ReadImage(img_fname, imageIO=imgio_type)                
+        img_arr  = sitk.GetArrayFromImage(img_file)
+        
+        standard_dev = np.max(img_arr)*noise_perc
+        
+        gaussian_re = np.random.normal(loc=0, scale=standard_dev, size=img_file.GetSize())
+        gaussian_im = np.random.normal(loc=0, scale=standard_dev, size=img_file.GetSize())
+        
+        imgaug_arr = np.sqrt(np.square(img_arr + gaussian_re) + np.square(gaussian_im))
+        
+        imgaug_file = sitk.GetImageFromArray(imgaug_arr).CopyInformation(img_file)
+        
+        img_basename  = os.path.basename(img_fname)
+        fname_arr_last= img_basename.split('_')[len(img_basename.split('_'))-1]
+        imgaug_basename = img_basename.replace(fname_arr_last[fname_arr_last.index('r'):fname_arr_last.index('r')+6], str(f'{noise_perc:02}'))
+        
+        imgaug_fname = os.path.join(os.path.dirname(img_fname), imgaug_basename)
+        sitk.WriteImage(imgaug_file, imgaug_fname)
+
+        if labels_available:
+                mskaug_fname = os.path.join(os.path.dirname(msk_fname), imgaug_basename.replace("_t1_","_labels_"))
+                shutil.copy(msk_fname, mskaug_fname)
+        
 #endregion augmentation methods      
 
 #region augmentation processes
@@ -130,10 +154,37 @@ def rotate_images(imgaug_list, mskaug_list):
                                         if progressbar_enabled: pbar.update(1)
         endtime_rot = time.time()
         rot_elapsedtime = round(endtime_rot-starttime_rot,3)
+        
         if progressbar_enabled: pbar.close()  
         else: print("Generating rotated images complete.", no_rot_files,"files generated in",rot_elapsedtime,"seconds.")  
         
         return rot_elapsedtime
+
+def noisify_images(imgaug_list, mskaug_list):
+        
+        noise_perc_min =  2
+        noise_perc_max = 20
+        noise_perc_inc =  5
+        no_noised_files = int((len(imgaug_list)*((noise_perc_max-noise_perc_min)/noise_perc_inc)))
+        
+        if progressbar_enabled: pbar = tqdm(total=no_noised_files,desc='Adding noise to images:')
+        starttime_noise = time.time()
+        for img_fname in imgaug_list:
+                if labels_available and not (mskaug_list == None):
+                        msk_fname = img_fname.replace("/brains/","/target_labels/").replace("_t1_","_labels_")
+                else: msk_fname = None
+                
+                for noise_perc in range(noise_perc_min, noise_perc_max+1, noise_perc_inc):
+                        
+                        noisify(img_fname, msk_fname, noise_perc)
+                        if progressbar_enabled: pbar.update(1)
+        
+        endtime_noise = time.time()
+        noise_elapsedtime = round(endtime_noise-starttime_noise,3)
+        
+        if progressbar_enabled: pbar.close()  
+        else: print("Adding noise to images complete.", no_noised_files,"files generated in",noise_elapsedtime,"seconds.")  			
+		
 #endregion augmentation processes
 
 def main():
@@ -142,7 +193,7 @@ def main():
         # If overwrite is true, delete any previously created output directores or files
         # Create an empty bool matrix to assign augmentation methods to perform in the
         # order: rotation (r), noise (n), spiking (s), deformation (d) and ghosting (g)
-        # Start augmentation processes in parallel.
+        # Rotate all images. Then start remaining augmentation processes in parallel.
         """
         
         global data_dir, output_dir, imgio_type
@@ -201,14 +252,26 @@ def main():
                 #endregion get filenames, load images
                 
                 #region resize and save images in output directory
-                if is_resize_outputs:
+                if is_resize_outputs: 
                         imgaug_file, mskaug_file = resample_img(output_imgsize, img_file, msk_file) 
                         
+                        mskaug_arr = sitk.GetArrayFromImage(mskaug_file)
+                        mskaug_arr[mskaug_arr >0.5]= 1 
+                        mskaug_arr[mskaug_arr<=0.5]= 0    
+                        mskaugt_file = sitk.GetImageFromArray(mskaug_arr)
+                        mskaugt_file.CopyInformation(mskaug_file)            
+                        
                         sitk.WriteImage(imgaug_file, imgaug_fname)
-                        sitk.WriteImage(mskaug_file, mskaug_fname)  
+                        sitk.WriteImage(mskaugt_file, mskaug_fname)  
                 else:
+                        msk_arr = sitk.GetArrayFromImage(msk_file)
+                        msk_arr[msk_arr >0.5]= 1 
+                        msk_arr[msk_arr<=0.5]= 0    
+                        mskt_file = sitk.GetImageFromArray(msk_arr)
+                        mskt_file.CopyInformation(msk_file) 
+                        
                         sitk.WriteImage(img_file, imgaug_fname)
-                        sitk.WriteImage(msk_file, mskaug_fname)       
+                        sitk.WriteImage(mskt_file, mskaug_fname)       
                 #endregion resize and save images in output directory
                                       
         #region get list of renamed and resized images
@@ -219,11 +282,17 @@ def main():
         #endregion get list of renamed and resized images
         
         """
-        # If augmentation method is selected, start respective process
+        # If an augmentation method is selected, start respective process
+        # Images are first rotated. Other augmenation methods are applied 
+        # afterwards to the new dataset (including originals and rotated)
         """
         if augtypes[0]: 
                 rot_elapsedtime = rotate_images(imgaug_list, mskaug_list)
-                print(rot_elapsedtime)
+        
+        if augtypes[1]: 
+                noise_elapsedtime = rotate_images(imgaug_list, mskaug_list) 
+                
+         
         #endregion augmentation - individual                
 if __name__ == "__main__":
     main()
