@@ -5,6 +5,7 @@ import time
 import shutil
 import argparse
 from tkinter.ttk import Progressbar
+import types
 
 import scipy
 import scipy.ndimage
@@ -16,7 +17,7 @@ from tqdm import tqdm
 is_overwrite = True # If true, any data previously processed will be lost
 is_resize_outputs = True
 labels_available  = True
-progressbar_enabled = False
+progressbar_enabled = True
 
 output_imgsize = (144,144,144)
 
@@ -254,8 +255,9 @@ def main():
         filename_suffix = "rC0000-n00-d0-sp0000-gh0"	
         
         augtypes = np.zeros(5,dtype=bool)
-        for type in augtypes_in: augtypes[['r','n','s','d','g'].index(type)]=True
-  
+        for type in augtypes_in: 
+                if type in ['r','n','s','d','g']: augtypes[['r','n','s','d','g'].index(type)]=True 
+        
         #region augmentation - individual
         for fname in files_list:
                 #region check file extension  
@@ -316,11 +318,11 @@ def main():
         # Images are first rotated. Other augmenation methods are applied 
         # afterwards to the new dataset (including originals and rotated)
         """
-        if augtypes[0]: 
-                rot_elapsedtime = rotate_images(imgaug_list, mskaug_list)
+        #if augtypes[0]: 
+        #        rot_elapsedtime = rotate_images(imgaug_list, mskaug_list)
         
-        if augtypes[1]: 
-                noise_elapsedtime = rotate_images(imgaug_list, mskaug_list) 
+        #if augtypes[1]: 
+        #        noise_elapsedtime = rotate_images(imgaug_list, mskaug_list) 
                 
          
         #endregion augmentation - individual                
