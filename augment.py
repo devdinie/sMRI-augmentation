@@ -165,8 +165,8 @@ def rotate_images(imgaug_list, mskaug_list):
                 |-brains
                 |-target_labels
         """
-        angle_min = -3 ; angle_max = 3
-        rot_inc  = 3
+        angle_min = -20 ; angle_max = 20
+        rot_inc  = 4
         all_axes = [(1, 0), (1, 2)] #[(1, 0), (1, 2), (0, 2)]
         no_rot_files = int((len(imgaug_list)*((angle_max-angle_min)/rot_inc)*len(all_axes)))
         
