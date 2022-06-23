@@ -68,22 +68,21 @@ def resample_img(output_imgsize, img_file, msk_file):
 #region augmentation methods
 def rotate(img_fname, msk_fname, angle, axes):
         
-        img_file = sitk.ReadImage(img_fname, imageIO=imgio_type)
-        if labels_available and not (msk_fname==None):
-                msk_file = sitk.ReadImage(msk_fname, imageIO=imgio_type)   
-                        
-        img_arr = sitk.GetArrayFromImage(img_file)
-        msk_arr = sitk.GetArrayFromImage(msk_file)
+        img_file = sitk.ReadImage(img_fname, imageIO=imgio_type)        
+        img_arr  = sitk.GetArrayFromImage(img_file)
         
         dir = 'C' if angle >= 0 else 'A'
         rot_str = "r"+dir+str(f'{np.abs(angle):02}')+str(axes[0])+str(axes[1])
-        if angle < 0 : angle += 360
         
-        imgaug_arr = scipy.ndimage.rotate(img_arr, angle, axes=axes, reshape=True)
-        mskaug_arr = scipy.ndimage.rotate(msk_arr, angle, axes=axes, reshape=True)
+        if not (angle == 0):
+                imgaug_arr = scipy.ndimage.rotate(img_arr, angle, axes=axes, reshape=True)   
+        else:
+                 imgaug_arr =  img_arr
+
+        imgaug_arr = imgaug_arr[:,::-1,::-1]
         
         imgaug_file = sitk.GetImageFromArray(imgaug_arr)
-        mskaug_file = sitk.GetImageFromArray(mskaug_arr)
+        imgaug_file.SetDirection((-1,0,0,0,-1,0,0,0,-1))
         
         img_basename  = os.path.basename(img_fname)
         fname_arr_last= img_basename.split('_')[len(img_basename.split('_'))-1]
@@ -91,11 +90,42 @@ def rotate(img_fname, msk_fname, angle, axes):
         
         imgaug_fname = os.path.join(os.path.dirname(img_fname), imgaug_basename)
         sitk.WriteImage(imgaug_file, imgaug_fname)
-
-        if labels_available:
+        
+        if not (angle == 0):
+                img_arr = img_arr[:,::-1,::-1]
+                img_file_in = sitk.GetImageFromArray(img_arr)
+                img_file_in.SetDirection((-1,0,0,0,-1,0,0,0,-1))
+                
+                sitk.WriteImage(img_file_in, imgaug_fname.replace(rot_str,"r"+dir+str(f'{np.abs(angle):02}')+"00"))
+                
+        if labels_available and not (msk_fname==None):
+                msk_file = sitk.ReadImage(msk_fname, imageIO=imgio_type)
+                msk_arr = sitk.GetArrayFromImage(msk_file)
+                
+                if not (angle == 0):
+                        mskaug_arr = scipy.ndimage.rotate(msk_arr, angle, axes=axes, reshape=True)
+                else:
+                        mskaug_arr = msk_arr
+                        
+                mskaug_arr[mskaug_arr >0.3]= 1 ; mskaug_arr[mskaug_arr<=0.3]= 0
+                mskaug_arr = scipy.ndimage.binary_closing(mskaug_arr).astype(int)
+                mskaug_arr = mskaug_arr[:,::-1,::-1]
+                
+                mskaug_file = sitk.GetImageFromArray(mskaug_arr)
+                mskaug_file.SetDirection((-1,0,0,0,-1,0,0,0,-1)) 
+                
                 mskaug_fname = os.path.join(os.path.dirname(msk_fname), imgaug_basename.replace("_t1_","_labels_"))
                 sitk.WriteImage(mskaug_file, mskaug_fname)
                 
+                if not (angle == 0):
+                        msk_arr = scipy.ndimage.binary_closing(msk_arr).astype(int)
+                        msk_arr = msk_arr[:,::-1,::-1]
+                        
+                        msk_file_in = sitk.GetImageFromArray(msk_arr)
+                        msk_file_in.SetDirection((-1,0,0,0,-1,0,0,0,-1))
+                
+                        sitk.WriteImage(msk_file_in,mskaug_fname.replace(rot_str,"r"+dir+str(f'{np.abs(angle):02}')+"00"))
+        
 def noisify(img_fname, msk_fname, noise_perc):
         
         img_file = sitk.ReadImage(img_fname, imageIO=imgio_type)                
@@ -135,9 +165,9 @@ def rotate_images(imgaug_list, mskaug_list):
                 |-brains
                 |-target_labels
         """
-        angle_min = -6 ; angle_max =  6
+        angle_min = -3 ; angle_max = 3
         rot_inc  = 3
-        all_axes = [(1, 0), (1, 2), (0, 2)]
+        all_axes = [(1, 0), (1, 2)] #[(1, 0), (1, 2), (0, 2)]
         no_rot_files = int((len(imgaug_list)*((angle_max-angle_min)/rot_inc)*len(all_axes)))
         
         if progressbar_enabled: pbar = tqdm(total=no_rot_files,desc='Generating rotated images:')
@@ -148,7 +178,6 @@ def rotate_images(imgaug_list, mskaug_list):
                 else: msk_fname = None
                            
                 for rot_angle in range(angle_min,angle_max+1,rot_inc):
-                        if not rot_angle == 0:
                                 for axes in all_axes:
                                         rotate(img_fname, msk_fname, rot_angle, axes)
                                         if progressbar_enabled: pbar.update(1)
@@ -162,7 +191,7 @@ def rotate_images(imgaug_list, mskaug_list):
 
 def noisify_images(imgaug_list, mskaug_list):
         
-        noise_perc_min =  2
+        noise_perc_min = 20
         noise_perc_max = 20
         noise_perc_inc =  5
         no_noised_files = int((len(imgaug_list)*((noise_perc_max-noise_perc_min)/noise_perc_inc)))
@@ -256,19 +285,18 @@ def main():
                         imgaug_file, mskaug_file = resample_img(output_imgsize, img_file, msk_file) 
                         
                         mskaug_arr = sitk.GetArrayFromImage(mskaug_file)
-                        mskaug_arr[mskaug_arr >0.3]= 1 
-                        mskaug_arr[mskaug_arr<=0.3]= 0    
-                        mskaugt_file = sitk.GetImageFromArray(mskaug_arr)
-                        mskaugt_file.CopyInformation(mskaug_file)            
                         
-                        sitk.WriteImage(imgaug_file, imgaug_fname)
+                        mskaug_arr[mskaug_arr >0.3]= 1 ; mskaug_arr[mskaug_arr<=0.3]= 0    
+                        mskaugt_file = sitk.GetImageFromArray(mskaug_arr)
+                        mskaugt_file.CopyInformation(mskaug_file)      
+                        
+                        sitk.WriteImage(imgaug_file , imgaug_fname)
                         sitk.WriteImage(mskaugt_file, mskaug_fname)  
                 else:
                         msk_arr = sitk.GetArrayFromImage(msk_file)
-                        msk_arr[msk_arr >0.3]= 1 
-                        msk_arr[msk_arr<=0.3]= 0    
-                        mskt_file = sitk.GetImageFromArray(msk_arr)
-                        mskt_file.CopyInformation(msk_file) 
+                        msk_arr[msk_arr >0.3]= 1 ; msk_arr[msk_arr<=0.3]= 0    
+                        mskt_file = sitk.GetImageFromArray(msk_arr) 
+                        mskt_file.CopyInformation(msk_file)
                         
                         sitk.WriteImage(img_file, imgaug_fname)
                         sitk.WriteImage(mskt_file, mskaug_fname)       
