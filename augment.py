@@ -3,9 +3,8 @@
 import os
 import time
 import shutil
+import random
 import argparse
-from tkinter.ttk import Progressbar
-import types
 
 import scipy
 import scipy.ndimage
@@ -18,7 +17,7 @@ is_overwrite = True # If true, any data previously processed will be lost
 is_resize_outputs = True
 labels_available  = True
 progressbar_enabled = True
-
+mix_augmethods = True
 output_imgsize = (144,144,144)
 
 #region custom errors
@@ -167,7 +166,7 @@ def noisify(img_fname, msk_fname, noise_perc):
 #endregion augmentation methods      
 
 #region augmentation processes
-def rotate_images(imgaug_list, mskaug_list):
+def rotate_images(imgaug_list):
         """
         Set min and max rotation angles and list axis of rotation to be used. 
         Rotate each image along each axis and in each of these cases, rotate 
@@ -178,15 +177,16 @@ def rotate_images(imgaug_list, mskaug_list):
                 |-brains
                 |-target_labels
         """
-        angle_min = -20 ; angle_max = 20
+        angle_min = -4 ; angle_max = 4
+        #angle_min = -20 ; angle_max = 20
         rot_inc  = 4
         all_axes = [(1, 0), (1, 2)] #[(1, 0), (1, 2), (0, 2)]
         no_rot_files = int((len(imgaug_list)*((angle_max-angle_min)/rot_inc)*len(all_axes)))
-        
+ 
         if progressbar_enabled: pbar = tqdm(total=no_rot_files,desc='Generating rotated images:')
         starttime_rot = time.time()
         for img_fname in imgaug_list:
-                if labels_available and not (mskaug_list == None):
+                if labels_available:
                         msk_fname = img_fname.replace("/brains/","/target_labels/").replace("_t1_","_labels_")
                 else: msk_fname = None
                            
@@ -202,23 +202,24 @@ def rotate_images(imgaug_list, mskaug_list):
         
         return rot_elapsedtime
 
-def noisify_images(imgaug_list, mskaug_list):
+def noisify_images(imgaug_list):
         
         noise_perc_min = 2
-        noise_perc_max = 8
+        noise_perc_max = 4 #8
         noise_perc_inc = 2
         no_noised_files = int((len(imgaug_list)*(((noise_perc_max-noise_perc_min)/noise_perc_inc)+1)))
         print(len(imgaug_list),noise_perc_max-noise_perc_min, (noise_perc_max-noise_perc_min)/noise_perc_inc )
         if progressbar_enabled: pbar = tqdm(total=no_noised_files,desc='Adding noise to images:')
         starttime_noise = time.time()
         for img_fname in imgaug_list:
-                if labels_available and not (mskaug_list == None):
+                if labels_available:
                         msk_fname = img_fname.replace("/brains/","/target_labels/").replace("_t1_","_labels_")
                 else: msk_fname = None
                 
                 for noise_perc in range(noise_perc_min, noise_perc_max+1, noise_perc_inc):
                         noisify(img_fname, msk_fname, noise_perc)
                         if progressbar_enabled: pbar.update(1)
+                        
         endtime_noise = time.time()
         noise_elapsedtime = round(endtime_noise-starttime_noise,3)
         
@@ -238,7 +239,7 @@ def main():
         # Rotate all images. Then start remaining augmentation processes in parallel.
         """
         
-        global data_dir, output_dir, imgio_type
+        global data_dir, output_dir, imgio_type, indivaug_done
         
         data_dir    = get_args().input_dir
         augtypes_in = get_args().aug_types
@@ -271,7 +272,6 @@ def main():
                         else: augtypes[['r','n','s','d','g'].index(type)]=True
                 except InputError as e: print("Invalid input {}. See --help.".format(type))
         
-        #region augmentation - individual
         for fname in files_list:
                 #region check file extension  
                 try:
@@ -321,26 +321,42 @@ def main():
                                       
         #region get list of renamed and resized images
         imgaug_list = list(map(lambda x: os.path.join(os.path.abspath(os.path.join(output_dir,"brains")), x),os.listdir(os.path.join(output_dir,"brains")))) 
-        if labels_available:
-                mskaug_list = list(map(lambda x: os.path.join(os.path.abspath(os.path.join(output_dir,"target_labels")), x),os.listdir(os.path.join(output_dir,"target_labels"))))
-        else:  mskaug_list = None
+
         #endregion get list of renamed and resized images
         
+        #region augmentation - individual
         """
         # If an augmentation method is selected, start respective process
         # Images are first rotated. Other augmenation methods are applied 
         # afterwards to the new dataset (including originals and rotated)
         """
         if augtypes[0]: 
-                rot_elapsedtime = rotate_images(imgaug_list, mskaug_list)
-                imgaugrot_list = list(map(lambda x: os.path.join(os.path.abspath(os.path.join(output_dir,"brains")), x),os.listdir(os.path.join(output_dir,"brains")))) 
-                if labels_available:
-                        mskaurot_list = list(map(lambda x: os.path.join(os.path.abspath(os.path.join(output_dir,"target_labels")), x),os.listdir(os.path.join(output_dir,"target_labels"))))
-                else:  mskaugrot_list = None
+                rot_elapsedtime = rotate_images(imgaug_list)
         
         if augtypes[1]: 
-                noise_elapsedtime = noisify_images(imgaug_list, mskaug_list) 
-         
-        #endregion augmentation - individual                
+                noise_elapsedtime = noisify_images(imgaug_list) 
+        
+        indivaug_done = True
+        
+        
+        #endregion augmentation - individual          
+        if mix_augmethods and indivaug_done:
+                
+                imgaugindiv_list = list(map(lambda x: os.path.join(os.path.abspath(os.path.join(output_dir,"brains")), x),os.listdir(os.path.join(output_dir,"brains")))) 
+
+                mixaug_lineno = sorted(random.sample(range(1, len(imgaugindiv_list)), int((len(imgaugindiv_list))/3)))
+                imgaugindiv_list = np.delete(imgaugindiv_list, mixaug_lineno).tolist()
+                
+                if augtypes[0]:
+                        raug_list = imgaugindiv_list
+                        [raug_list.remove(line) for line in imgaugindiv_list if "rC00" in line.split('_')[len(line.split('_'))-1].split('.')[0]]
+                        rotatemixed_elapsedtime = noisify_images(raug_list)
+                        
+                if augtypes[1]:
+                        naug_list = imgaugindiv_list
+                        [naug_list.remove(line) for line in imgaugindiv_list if "n00" in line.split('_')[len(line.split('_'))-1].split('.')[0]]
+                        noisemixed_elapsedtime = rotate_images(naug_list)
+                        
+                      
 if __name__ == "__main__":
     main()
