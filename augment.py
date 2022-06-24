@@ -2,14 +2,17 @@
 
 import os
 import time
+import scipy
 import shutil
 import random
+import skimage
 import argparse
 
-import scipy
-import scipy.ndimage
 import numpy as np
 import SimpleITK as sitk
+
+import scipy.ndimage
+import skimage.morphology
 
 from tqdm import tqdm
 
@@ -109,9 +112,8 @@ def rotate(img_fname, msk_fname, angle, axes):
                         mskaug_arr = scipy.ndimage.rotate(msk_arr, angle, axes=axes, reshape=True)
                 else:
                         mskaug_arr = msk_arr
-                        
+                            
                 mskaug_arr[mskaug_arr >0.3]= 1 ; mskaug_arr[mskaug_arr<=0.3]= 0
-                mskaug_arr = scipy.ndimage.binary_closing(mskaug_arr).astype(int)
                 mskaug_arr = mskaug_arr[:,::-1,::-1]
                 
                 mskaug_file = sitk.GetImageFromArray(mskaug_arr)
@@ -121,7 +123,7 @@ def rotate(img_fname, msk_fname, angle, axes):
                 sitk.WriteImage(mskaug_file, mskaug_fname)
                 
                 if not (angle == 0):
-                        msk_arr = scipy.ndimage.binary_closing(msk_arr).astype(int)
+                        msk_arr[msk_arr >0.3]= 1 ; msk_arr[msk_arr<=0.3]= 0
                         msk_arr = msk_arr[:,::-1,::-1]
                         
                         msk_file_in = sitk.GetImageFromArray(msk_arr)
@@ -208,7 +210,7 @@ def noisify_images(imgaug_list):
         noise_perc_max = 4 #8
         noise_perc_inc = 2
         no_noised_files = int((len(imgaug_list)*(((noise_perc_max-noise_perc_min)/noise_perc_inc)+1)))
-        print(len(imgaug_list),noise_perc_max-noise_perc_min, (noise_perc_max-noise_perc_min)/noise_perc_inc )
+        
         if progressbar_enabled: pbar = tqdm(total=no_noised_files,desc='Adding noise to images:')
         starttime_noise = time.time()
         for img_fname in imgaug_list:
