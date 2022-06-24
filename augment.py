@@ -5,14 +5,12 @@ import time
 import scipy
 import shutil
 import random
-import skimage
 import argparse
 
 import numpy as np
 import SimpleITK as sitk
 
 import scipy.ndimage
-import skimage.morphology
 
 from tqdm import tqdm
 
@@ -114,8 +112,9 @@ def rotate(img_fname, msk_fname, angle, axes):
                         mskaug_arr = msk_arr
                             
                 mskaug_arr[mskaug_arr >0.3]= 1 ; mskaug_arr[mskaug_arr<=0.3]= 0
-                mskaug_arr = mskaug_arr[:,::-1,::-1]
+                #TODO: add binary fill holes (temporarily removed: output visible with nib but can't Display with minctoolkit)
                 
+                mskaug_arr = mskaug_arr[:,::-1,::-1]
                 mskaug_file = sitk.GetImageFromArray(mskaug_arr)
                 mskaug_file.SetDirection((-1,0,0,0,-1,0,0,0,-1)) 
                 
@@ -167,7 +166,7 @@ def noisify(img_fname, msk_fname, noise_perc):
 
 #endregion augmentation methods      
 
-#region augmentation processes
+#region augment dataset
 def rotate_images(imgaug_list):
         """
         Set min and max rotation angles and list axis of rotation to be used. 
@@ -179,8 +178,8 @@ def rotate_images(imgaug_list):
                 |-brains
                 |-target_labels
         """
-        angle_min = -4 ; angle_max = 4
-        #angle_min = -20 ; angle_max = 20
+        
+        angle_min = -16 ; angle_max = 16
         rot_inc  = 4
         all_axes = [(1, 0), (1, 2)] #[(1, 0), (1, 2), (0, 2)]
         no_rot_files = int((len(imgaug_list)*((angle_max-angle_min)/rot_inc)*len(all_axes)))
@@ -207,7 +206,7 @@ def rotate_images(imgaug_list):
 def noisify_images(imgaug_list):
         
         noise_perc_min = 2
-        noise_perc_max = 4 #8
+        noise_perc_max = 8
         noise_perc_inc = 2
         no_noised_files = int((len(imgaug_list)*(((noise_perc_max-noise_perc_min)/noise_perc_inc)+1)))
         
@@ -230,7 +229,7 @@ def noisify_images(imgaug_list):
         
         return noise_elapsedtime
 
-#endregion augmentation processes
+#endregion augment dataset
 
 def main():
         """
@@ -321,10 +320,7 @@ def main():
                         sitk.WriteImage(mskt_file, mskaug_fname)       
                 #endregion resize and save images in output directory
                                       
-        #region get list of renamed and resized images
         imgaug_list = list(map(lambda x: os.path.join(os.path.abspath(os.path.join(output_dir,"brains")), x),os.listdir(os.path.join(output_dir,"brains")))) 
-
-        #endregion get list of renamed and resized images
         
         #region augmentation - individual
         """
