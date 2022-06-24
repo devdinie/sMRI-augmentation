@@ -24,6 +24,8 @@ output_imgsize = (144,144,144)
 #region custom errors
 class FilenameError(Exception):
         pass
+class InputError(Exception):
+        pass
 #endregion custom errors
 
 #region parse arguments
@@ -42,8 +44,7 @@ def get_args():
         parser.add_argument("-aug_types", default = ['r','n','s','d','g'], nargs='+',
                             help= "Methods to augment input data: first letter of method(s) separated with space.\n"
                                 + "Eg: to perform all augmentation methods: augment.py -aug_types r n s d g\n"
-                                + " r - rotation\t n - noise\n s - spiking\t d - deformation \n g - ghosting")
-        
+                                + " r - rotation\t n - noise\n s - spiking\t d - deformation \n g - ghosting") 
         return parser.parse_args()
 #endregion parse arguments
 
@@ -134,26 +135,35 @@ def noisify(img_fname, msk_fname, noise_perc):
         img_file = sitk.ReadImage(img_fname, imageIO=imgio_type)                
         img_arr  = sitk.GetArrayFromImage(img_file)
         
-        standard_dev = np.max(img_arr)*noise_perc
+        standard_dev = np.max(img_arr)*(noise_perc/100)
         
-        gaussian_re = np.random.normal(loc=0, scale=standard_dev, size=img_file.GetSize())
-        gaussian_im = np.random.normal(loc=0, scale=standard_dev, size=img_file.GetSize())
+        gaussian_re = np.random.normal(loc=0, scale=standard_dev, size=tuple(img_arr.shape))
+        gaussian_im = np.random.normal(loc=0, scale=standard_dev, size=tuple(img_arr.shape))
         
         imgaug_arr = np.sqrt(np.square(img_arr + gaussian_re) + np.square(gaussian_im))
         
-        imgaug_file = sitk.GetImageFromArray(imgaug_arr).CopyInformation(img_file)
+        imgaug_arr = imgaug_arr[:,::-1,::-1]
+        imgaug_file = sitk.GetImageFromArray(imgaug_arr)
+        imgaug_file.SetDirection((-1,0,0,0,-1,0,0,0,-1))
         
         img_basename  = os.path.basename(img_fname)
         fname_arr_last= img_basename.split('_')[len(img_basename.split('_'))-1]
-        imgaug_basename = img_basename.replace(fname_arr_last[fname_arr_last.index('r'):fname_arr_last.index('r')+6], str(f'{noise_perc:02}'))
+        imgaug_basename = img_basename.replace(fname_arr_last[fname_arr_last.index('n'):fname_arr_last.index('n')+3], "n"+str(f'{noise_perc:02}'))
         
         imgaug_fname = os.path.join(os.path.dirname(img_fname), imgaug_basename)
         sitk.WriteImage(imgaug_file, imgaug_fname)
-
-        if labels_available:
-                mskaug_fname = os.path.join(os.path.dirname(msk_fname), imgaug_basename.replace("_t1_","_labels_"))
-                shutil.copy(msk_fname, mskaug_fname)
         
+        if labels_available:
+                msk_file = sitk.ReadImage(msk_fname, imageIO=imgio_type)                
+                msk_arr  = sitk.GetArrayFromImage(msk_file)
+                
+                mskaug_arr = msk_arr[:,::-1,::-1]
+                mskaug_file = sitk.GetImageFromArray(mskaug_arr)
+                mskaug_file.SetDirection((-1,0,0,0,-1,0,0,0,-1))
+                
+                mskaug_fname = os.path.join(os.path.dirname(msk_fname), imgaug_basename.replace("_t1_","_labels_"))
+                sitk.WriteImage(mskaug_file, mskaug_fname)
+
 #endregion augmentation methods      
 
 #region augmentation processes
@@ -188,17 +198,17 @@ def rotate_images(imgaug_list, mskaug_list):
         rot_elapsedtime = round(endtime_rot-starttime_rot,3)
         
         if progressbar_enabled: pbar.close()  
-        else: print("Generating rotated images complete.", no_rot_files,"files generated in",rot_elapsedtime,"seconds.")  
+        print("Generating rotated images complete.", no_rot_files,"files generated in",rot_elapsedtime,"seconds.")  
         
         return rot_elapsedtime
 
 def noisify_images(imgaug_list, mskaug_list):
         
-        noise_perc_min = 20
-        noise_perc_max = 20
-        noise_perc_inc =  5
-        no_noised_files = int((len(imgaug_list)*((noise_perc_max-noise_perc_min)/noise_perc_inc)))
-        
+        noise_perc_min = 2
+        noise_perc_max = 8
+        noise_perc_inc = 2
+        no_noised_files = int((len(imgaug_list)*(((noise_perc_max-noise_perc_min)/noise_perc_inc)+1)))
+        print(len(imgaug_list),noise_perc_max-noise_perc_min, (noise_perc_max-noise_perc_min)/noise_perc_inc )
         if progressbar_enabled: pbar = tqdm(total=no_noised_files,desc='Adding noise to images:')
         starttime_noise = time.time()
         for img_fname in imgaug_list:
@@ -207,16 +217,16 @@ def noisify_images(imgaug_list, mskaug_list):
                 else: msk_fname = None
                 
                 for noise_perc in range(noise_perc_min, noise_perc_max+1, noise_perc_inc):
-                        
                         noisify(img_fname, msk_fname, noise_perc)
                         if progressbar_enabled: pbar.update(1)
-        
         endtime_noise = time.time()
         noise_elapsedtime = round(endtime_noise-starttime_noise,3)
         
         if progressbar_enabled: pbar.close()  
-        else: print("Adding noise to images complete.", no_noised_files,"files generated in",noise_elapsedtime,"seconds.")  			
-		
+        print("Adding noise to images complete.", no_noised_files,"files generated in",noise_elapsedtime,"seconds.")  			
+        
+        return noise_elapsedtime
+
 #endregion augmentation processes
 
 def main():
@@ -256,14 +266,17 @@ def main():
         
         augtypes = np.zeros(5,dtype=bool)
         for type in augtypes_in: 
-                if type in ['r','n','s','d','g']: augtypes[['r','n','s','d','g'].index(type)]=True 
+                try:
+                        if not type in ['r','n','s','d','g']: raise InputError()
+                        else: augtypes[['r','n','s','d','g'].index(type)]=True
+                except InputError as e: print("Invalid input {}. See --help.".format(type))
         
         #region augmentation - individual
         for fname in files_list:
                 #region check file extension  
                 try:
                         if not fname.endswith((".nii",".mnc")): 
-                                raise FilenameError(fname.split(".")[1])
+                                raise FilenameError()
                         else: 
                                 imgio_type = "NiftiImageIO" if fname.split(".")[1] == "nii" else "MINCImageIO"
                 except FilenameError as e:  
@@ -318,12 +331,15 @@ def main():
         # Images are first rotated. Other augmenation methods are applied 
         # afterwards to the new dataset (including originals and rotated)
         """
-        #if augtypes[0]: 
-        #        rot_elapsedtime = rotate_images(imgaug_list, mskaug_list)
+        if augtypes[0]: 
+                rot_elapsedtime = rotate_images(imgaug_list, mskaug_list)
+                imgaugrot_list = list(map(lambda x: os.path.join(os.path.abspath(os.path.join(output_dir,"brains")), x),os.listdir(os.path.join(output_dir,"brains")))) 
+                if labels_available:
+                        mskaurot_list = list(map(lambda x: os.path.join(os.path.abspath(os.path.join(output_dir,"target_labels")), x),os.listdir(os.path.join(output_dir,"target_labels"))))
+                else:  mskaugrot_list = None
         
-        #if augtypes[1]: 
-        #        noise_elapsedtime = rotate_images(imgaug_list, mskaug_list) 
-                
+        if augtypes[1]: 
+                noise_elapsedtime = noisify_images(imgaug_list, mskaug_list) 
          
         #endregion augmentation - individual                
 if __name__ == "__main__":
