@@ -18,7 +18,7 @@ is_overwrite = True # If true, any data previously processed will be lost
 is_resize_outputs = True
 labels_available  = True
 progressbar_enabled = True
-mix_augmethods = False
+mix_augmethods = True
 output_imgsize = (144,144,144)
 
 #region custom errors
@@ -50,36 +50,23 @@ def get_args():
 
 #region utilities
 def resample_img(output_imgsize, img_file, msk_file):
-
         
-        msk_resampledtoimg = sitk.Resample(msk_file, img_file.GetSize(), sitk.Transform(),sitk.sitkNearestNeighbor,
-                                           img_file.GetOrigin(), img_file.GetSpacing(), img_file.GetDirection(), 0,
-                                           msk_file.GetPixelID())
+        ref_file = sitk.GetImageFromArray(np.zeros((output_imgsize)))
+        ref_file.SetOrigin(img_file.GetOrigin())
+        ref_file.SetDirection(img_file.GetDirection())
         
-        #region reference image properties
         ref_physicalsize = np.zeros(img_file.GetDimension())
         ref_physicalsize[:] = [(sz-1)*spc if sz*spc > mx  else mx for sz, spc, mx in zip(img_file.GetSize(), img_file.GetSpacing(), ref_physicalsize)]
         
-        reference_spacing   = [ phys_sz/(sz-1) for sz, phys_sz in zip(output_imgsize, ref_physicalsize) ]
+        ref_spacing   = [ phys_sz/(sz-1) for sz, phys_sz in zip(output_imgsize, ref_physicalsize) ]
+        ref_file.SetSpacing(ref_spacing)
         
-        reference_img = sitk.GetImageFromArray(np.zeros(output_imgsize))
-        reference_img.SetOrigin(msk_resampledtoimg.GetOrigin())
-        reference_img.SetDirection(msk_resampledtoimg.GetDirection())
-        reference_img.SetSpacing(reference_spacing)
-        
-        img_resampled = sitk.Resample(img_file,reference_img)
-        img_resampled.SetOrigin(reference_img.GetOrigin())
-        img_resampled.SetSpacing(reference_img.GetSpacing())
-        img_resampled.SetDirection(reference_img.GetDirection())
-        
-        msk_resampled = sitk.Resample(msk_file,img_resampled)
-        msk_resampled.SetOrigin(img_resampled.GetOrigin())
-        msk_resampled.SetSpacing(img_resampled.GetSpacing())
-        msk_resampled.SetDirection(img_resampled.GetDirection())
-        #endregion define reference image properties
-        
-        return img_resampled, msk_resampled
-
+        img_resampled = sitk.Resample(img_file, ref_file)
+        if not (msk_file == None):
+                msk_resampled = sitk.Resample(msk_file, img_resampled)
+                return img_resampled, msk_resampled
+        else:
+                return img_resampled, None
 #endregion utilities
 
 #region augmentation methods
@@ -244,7 +231,7 @@ def noisify_images(imgaug_list):
 
 #endregion augment dataset
 
-def augment_data(data_dir, augtypes_in, output_dir):
+def main():
         """
         # Input arguments: data directory, output directory, file type (nii or mnc)
         # If overwrite is true, delete any previously created output directores or files
@@ -252,7 +239,12 @@ def augment_data(data_dir, augtypes_in, output_dir):
         # order: rotation (r), noise (n), spiking (s), deformation (d) and ghosting (g)
         # Rotate all images. Then start remaining augmentation processes in parallel.
         """
-        global indivaug_done, imgio_type
+        
+        global data_dir, output_dir, imgio_type, indivaug_done
+        
+        data_dir    = get_args().input_dir
+        augtypes_in = get_args().aug_types
+        output_dir  = get_args().output_dir
         
         #region initialize directories
         if is_overwrite and (os.path.exists(output_dir)): 
@@ -273,14 +265,13 @@ def augment_data(data_dir, augtypes_in, output_dir):
         
         filename_suffix = "rC0000-n00-d0-sp0000-gh0"	
         
-        if not augtypes_in == None:        
-                augtypes = np.zeros(5,dtype=bool)
-                for type in augtypes_in: 
-                        try:
-                                if not type in ['r','n','s','d','g']: raise InputError()
-                                else: augtypes[['r','n','s','d','g'].index(type)]=True
-                        except InputError as e: print("Invalid input {}. See --help.".format(type))
-                
+        augtypes = np.zeros(5,dtype=bool)
+        for type in augtypes_in: 
+                try:
+                        if not type in ['r','n','s','d','g']: raise InputError()
+                        else: augtypes[['r','n','s','d','g'].index(type)]=True
+                except InputError as e: print("Invalid input {}. See --help.".format(type))
+        
         for fname in files_list:
                 #region check file extension  
                 try:
@@ -312,28 +303,22 @@ def augment_data(data_dir, augtypes_in, output_dir):
                         
                         mskaug_arr = sitk.GetArrayFromImage(mskaug_file)
                         
-                        mskaug_arr[mskaug_arr >0.3]= 1 ; mskaug_arr[mskaug_arr<=0.3]= 0
-                         
-                        mskaugt_file = sitk.GetImageFromArray(mskaug_arr)  
-                        mskaugt_file.CopyInformation(mskaug_file)   
+                        mskaug_arr[mskaug_arr >0.3]= 1 ; mskaug_arr[mskaug_arr<=0.3]= 0    
+                        mskaugt_file = sitk.GetImageFromArray(mskaug_arr)
+                        mskaugt_file.CopyInformation(mskaug_file)      
                         
                         sitk.WriteImage(imgaug_file , imgaug_fname)
                         sitk.WriteImage(mskaugt_file, mskaug_fname)  
                 else:
                         msk_arr = sitk.GetArrayFromImage(msk_file)
-                       
-                        msk_arr[msk_arr >0.3]= 1 ; msk_arr[msk_arr<=0.3]= 0  
-                        
-                        mskt_file = sitk.GetImageFromArray(msk_arr)
+                        msk_arr[msk_arr >0.3]= 1 ; msk_arr[msk_arr<=0.3]= 0    
+                        mskt_file = sitk.GetImageFromArray(msk_arr) 
                         mskt_file.CopyInformation(msk_file)
                         
                         sitk.WriteImage(img_file, imgaug_fname)
                         sitk.WriteImage(mskt_file, mskaug_fname)       
                 #endregion resize and save images in output directory
-        
-        if augtypes_in == None:
-                return    
-                                     
+                                      
         imgaug_list = list(map(lambda x: os.path.join(os.path.abspath(os.path.join(output_dir,"brains")), x),os.listdir(os.path.join(output_dir,"brains")))) 
         
         #region augmentation - individual
@@ -369,12 +354,6 @@ def augment_data(data_dir, augtypes_in, output_dir):
                         [naug_list.remove(line) for line in imgaugindiv_list if "n00" in line.split('_')[len(line.split('_'))-1].split('.')[0]]
                         noisemixed_elapsedtime = rotate_images(naug_list)
                         
-def main():
-        global data_dir, output_dir
-  
-        augment_data(data_dir = get_args().input_dir,
-                     augtypes_in = get_args().aug_types,
-                     output_dir = get_args().output_dir)
                       
 if __name__ == "__main__":
     main()
