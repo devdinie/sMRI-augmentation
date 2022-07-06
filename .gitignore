@@ -3,7 +3,6 @@
 
 data/
 data*/
-data*/*
 *nii
 models_indiv_augmethods/
-models_indiv_augmethods_2/
+old_scripts/
